@@ -37,3 +37,9 @@ spec:
 ```
 
 A user named `myuser` with a password `example` will be connected to pod `k8sssh-example` in namespace `default` and, without any command specified on user side it will spawn a `bash` shell.
+
+## TODO
+
+- [ ] pod selector
+- [ ] container selector
+- [ ] secrets for password and authorizedkeys
