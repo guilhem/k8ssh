@@ -1,0 +1,16 @@
+domain: barpilot.io
+layout:
+- go.kubebuilder.io/v3
+projectName: k8ssh
+repo: github.com/guilhem/k8ssh
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: barpilot.io
+  group: k8ssh
+  kind: Connection
+  path: github.com/guilhem/k8ssh/api/v1alpha1
+  version: v1alpha1
+version: "3"

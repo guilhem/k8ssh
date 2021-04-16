@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: k8sssh-example
+spec:
+  containers:
+    - name: ubuntu
+      image: ubuntu
+      command:
+        - sleep
+        - infinity
+
+---
+apiVersion: k8ssh.barpilot.io/v1alpha1
+kind: Connection
+metadata:
+  name: root
+spec:
+  pod:
+    name: k8sssh-example
+    namespace: default
+  command: ["bash"]
+  password: "example"
