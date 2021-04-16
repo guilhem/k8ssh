@@ -1,6 +1,7 @@
 # k8ssh
 
-Connect to kubernetes pod with ssh.
+Connect to kubernetes pod with SSH.
+You can see it as a SSH <-> `kubectl exec` gateway.
 
 ## Usage
 
