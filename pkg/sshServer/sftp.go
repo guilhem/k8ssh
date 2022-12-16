@@ -21,7 +21,7 @@ func SftpHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Subsy
 		if !ok {
 			u, err := getUser(ctx, clientset, ctx.User())
 			if err != nil {
-				s.Write([]byte(err.Error()))
+				s.Stderr().Write([]byte(err.Error()))
 
 				return
 			}
