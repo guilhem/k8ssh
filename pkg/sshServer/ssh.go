@@ -39,7 +39,7 @@ func SshHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Handle
 		if !ok {
 			u, err := getUser(ctx, clientset, ctx.User())
 			if err != nil {
-				s.Write([]byte(err.Error()))
+				s.Stderr().Write([]byte(err.Error()))
 
 				return
 			}
@@ -75,7 +75,7 @@ func SshHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Handle
 		cmd, err := command(s.Command(), pod, sa)
 		if err != nil {
 			log.Printf("Can't get command: %v", err)
-			s.Write([]byte(ErrDestination.Error()))
+			s.Stderr().Write([]byte(ErrDestination.Error()))
 			s.Exit(1)
 
 			return

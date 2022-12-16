@@ -16,14 +16,12 @@ limitations under the License.
 package cmd
 
 import (
-	"context"
-	"errors"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/gliderlabs/ssh"
 	"github.com/spf13/cobra"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
 	sshserver "github.com/guilhem/k8ssh/pkg/sshServer"
@@ -39,7 +37,6 @@ and usage of using your command. For example:
 Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
-	PreRunE:      preServe,
 	RunE:         serve,
 	SilenceUsage: true,
 }
@@ -58,75 +55,30 @@ func init() {
 	serveCmd.Flags().StringVarP(&addr, "address", "a", ":2222", "Address to listen")
 }
 
-type configKey struct{}
-
-func preServe(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
+func serve(cmd *cobra.Command, args []string) error {
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return err
 	}
 
-	ctx = context.WithValue(ctx, configKey{}, config)
-	cmd.SetContext(ctx)
-
-	return nil
-}
-
-func serve(cmd *cobra.Command, args []string) error {
-	config, ok := cmd.Context().Value(configKey{}).(*rest.Config)
-	if !ok {
-		return errors.New("can't get kclient")
-	}
-
-	if err := setKubernetesDefaults(config); err != nil {
-		return err
-	}
-
-	// creates the clientset
-	clientset, err := kubernetes.NewForConfig(config)
+	s, err := sshserver.New(addr, config)
 	if err != nil {
 		return err
 	}
 
-	// callBack := func(ctx ssh.Context, conn net.Conn) net.Conn {
-	// 	return conn
-	// }
+	var lc net.ListenConfig
 
-	server := ssh.Server{
-		Addr:             addr,
-		Handler:          sshserver.SshHandler(clientset, config),
-		PublicKeyHandler: sshserver.PublicKeyHandler(clientset),
-		PasswordHandler:  sshserver.PasswordHandler(),
-		SubsystemHandlers: map[string]ssh.SubsystemHandler{
-			"sftp": sshserver.SftpHandler(clientset, config),
-		},
+	l, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return err
 	}
 
-	if err := server.ListenAndServe(); err != nil {
+	if err := s.Serve(l); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-// setKubernetesDefaults sets default values on the provided client config for accessing the
-// Kubernetes API or returns an error if any of the defaults are impossible or invalid.
-// TODO this isn't what we want.  Each clientset should be setting defaults as it sees fit.
-func setKubernetesDefaults(config *rest.Config) error {
-	// TODO remove this hack.  This is allowing the GetOptions to be serialized.
-	config.GroupVersion = &schema.GroupVersion{Group: "", Version: "v1"}
-
-	if config.APIPath == "" {
-		config.APIPath = "/api"
-	}
-
-	if config.NegotiatedSerializer == nil {
-		// This codec factory ensures the resources are not converted. Therefore, resources
-		// will not be round-tripped through internal versions. Defaulting does not happen
-		// on the client.
-		config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
-	}
-	return rest.SetKubernetesDefaults(config)
 }
