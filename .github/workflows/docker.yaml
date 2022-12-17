@@ -57,5 +57,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: |
             type=gha,scope=${{ github.workflow }}
-            type=registry,ref=ghcr.io/themecloud/infrapi:latest
           cache-to: type=gha,scope=${{ github.workflow }},mode=max
