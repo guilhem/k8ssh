@@ -6,7 +6,7 @@ require (
 	github.com/gliderlabs/ssh v0.3.5
 	github.com/go-pkgz/expirable-cache/v2 v2.0.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
-	github.com/spf13/cobra v1.6.1
+	github.com/spf13/cobra v1.7.0
 	golang.org/x/time v0.3.0
 	k8s.io/api v0.25.3
 	k8s.io/apimachinery v0.25.3
@@ -28,7 +28,7 @@ require (
 	github.com/google/gnostic v0.5.7-v3refs // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/gofuzz v1.1.0 // indirect
-	github.com/inconshreveable/mousetrap v1.0.1 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mailru/easyjson v0.7.6 // indirect
