@@ -16,6 +16,13 @@ limitations under the License.
 package cmd
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -31,30 +38,21 @@ import (
 
 // serveCmd represents the serve command
 var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Use:          "serve",
+	Short:        "Start the ssh server",
 	RunE:         serve,
 	SilenceUsage: true,
 }
 
 var addr string
+var keyPath string
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// serveCmd.PersistentFlags().String("foo", "", "A help for foo")
-
 	serveCmd.Flags().StringVarP(&addr, "address", "a", ":2222", "Address to listen")
+
+	serveCmd.Flags().StringVarP(&keyPath, "hostkey", "k", "", "Path to the host private key")
 }
 
 func serve(cmd *cobra.Command, args []string) error {
@@ -69,21 +67,75 @@ func serve(cmd *cobra.Command, args []string) error {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	s, err := sshserver.New(addr, restConfig, logger)
+	var key crypto.Signer
+
+	if keyPath == "" {
+
+		genkey, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return fmt.Errorf("failed to generate key: %w", err)
+		}
+		key = genkey
+	} else {
+		// Read the private key
+		keyBytes, err := os.ReadFile(keyPath)
+		if err != nil {
+			return fmt.Errorf("failed to read private key: %w", err)
+		}
+
+		parseKey, err := ParsePrivateKey(keyBytes)
+		if err != nil {
+			return fmt.Errorf("failed to parse private key: %w", err)
+		}
+
+		key = parseKey
+	}
+
+	s, err := sshserver.New(addr, restConfig, logger, key)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create server: %w", err)
 	}
 
 	var lc net.ListenConfig
 
 	listerner, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to listen: %w", err)
 	}
 
 	if err := s.Server.Serve(listerner); err != nil {
-		return err
+		return fmt.Errorf("failed to serve: %w", err)
 	}
 
 	return nil
+}
+
+func ParsePrivateKey(pemBytes []byte) (crypto.Signer, error) {
+	// Decode the PEM block
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("can't decode PEM block")
+	}
+
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err == nil {
+		switch k := key.(type) {
+		case *rsa.PrivateKey:
+			return k, nil
+		case *ecdsa.PrivateKey:
+			return k, nil
+		default:
+			return nil, errors.New("key type not supported")
+		}
+	}
+
+	return nil, errors.New("key type not supported")
 }
