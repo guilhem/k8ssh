@@ -10,10 +10,14 @@ import (
 	"github.com/gliderlabs/ssh"
 	"github.com/google/shlex"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
 
 type User struct {
@@ -90,61 +94,16 @@ func SshHandler(cl client.Client, config *rest.Config) ssh.Handler {
 			UserName: serviceAccountName(user.User, user.Namespace),
 		}
 
-		restClient, err := rest.RESTClientFor(impConfig)
+		exec, err := remotecommandExec(impConfig, user.Pod, user.Namespace, cmd, hasPTY)
 		if err != nil {
-			s.Write([]byte(err.Error()))
-
-			return
-		}
-
-		// restClient := impClientset.RESTClient()
-
-		req := restClient.Post().
-			Resource("pods").
-			Name(user.Pod).
-			Namespace(user.Namespace).
-			SubResource("exec")
-
-		req.VersionedParams(&v1.PodExecOptions{
-			Command: cmd,
-			Stdin:   true,
-			Stdout:  true,
-			Stderr:  true,
-			TTY:     hasPTY,
-		}, scheme.ParameterCodec)
-
-		log.Printf("exec generated URL: %s", req.URL())
-
-		exec, err := remotecommand.NewSPDYExecutor(impConfig, "POST", req.URL())
-		if err != nil {
-			log.Printf("fail create NewSPDYExecutor for url '%s': %v", req.URL(), err)
+			log.Printf("can't create exec: %v", err)
 			s.Stderr().Write([]byte(ErrDestination.Error()))
-			s.Exit(1)
 
 			return
 		}
-
-		// type fakeTerminalSizeQueue struct{}
-
-		// var once sync.Once
-		// done := make(chan *remotecommand.TerminalSize)
-
-		// func (f *fakefakeTerminalSizeQueue) Next() *remotecommand.TerminalSize {
-		// 	once.Do(func() {
-		// 		tSize := &remotecommand.TerminalSize{
-		// 			Width: uint16(pty.Window.Width),
-		// 			Height: uint16(pty.Window.Height),
-		// 		}
-
-		// 		done <- tSize
-		// 		return
-		// 	})
-
-		// 	return <-done
-		// }
 
 		// if !ok {
-		if err := exec.Stream(remotecommand.StreamOptions{
+		if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 			Tty:               hasPTY,
 			Stdin:             s,
 			Stdout:            s,
@@ -158,6 +117,60 @@ func SshHandler(cl client.Client, config *rest.Config) ssh.Handler {
 			return
 		}
 	}
+}
+
+func remotecommandExec(config *rest.Config, pod, namespace string, cmd []string, pty bool) (remotecommand.Executor, error) {
+	gvk := schema.GroupVersionKind{
+		Group:   "",
+		Version: "v1",
+		Kind:    "Pod",
+	}
+
+	httpClient, err := rest.HTTPClientFor(config)
+	if err != nil {
+		return nil, fmt.Errorf("can't get HTTP client: %w", err)
+	}
+
+	restClient, err := apiutil.RESTClientForGVK(gvk, false, config, scheme.Codecs, httpClient)
+	if err != nil {
+		return nil, fmt.Errorf("can't get REST client: %w", err)
+	}
+
+	// restClient := impClientset.RESTClient()
+
+	req := restClient.Post().
+		Resource("pods").
+		Name(pod).
+		Namespace(namespace).
+		SubResource("exec")
+
+	req.VersionedParams(&v1.PodExecOptions{
+		Command: cmd,
+		Stdin:   true,
+		Stdout:  true,
+		Stderr:  true,
+		TTY:     pty,
+	}, runtime.NewParameterCodec(scheme.Scheme))
+
+	spdyExec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	if err != nil {
+		return nil, fmt.Errorf("can't create SPDY executor: %w", err)
+	}
+
+	// WebSocketExecutor must be "GET" method as described in RFC 6455 Sec. 4.1 (page 17).
+	websocketExec, err := remotecommand.NewWebSocketExecutor(config, "GET", req.URL().String())
+	if err != nil {
+		return nil, fmt.Errorf("can't create WebSocket executor: %w", err)
+	}
+
+	exec, err := remotecommand.NewFallbackExecutor(websocketExec, spdyExec, func(err error) bool {
+		return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("can't create fallback executor: %w", err)
+	}
+
+	return exec, nil
 }
 
 type sizeQueue struct {

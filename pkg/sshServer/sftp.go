@@ -5,8 +5,6 @@ import (
 
 	"github.com/gliderlabs/ssh"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/httpstream"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -63,46 +61,11 @@ func SftpHandler(cl client.Client, config *rest.Config) ssh.SubsystemHandler {
 			UserName: serviceAccountName(user.User, user.Namespace),
 		}
 
-		restClient, err := rest.RESTClientFor(impConfig)
+		exec, err := remotecommandExec(impConfig, user.Pod, user.Namespace, cmd, false)
 		if err != nil {
-			s.Stderr().Write([]byte(err.Error()))
-			s.Exit(1)
-
-			return
-		}
-
-		req := restClient.Post().
-			Resource("pods").
-			Name(user.Pod).
-			Namespace(user.Namespace).
-			SubResource("exec")
-
-		req.VersionedParams(&v1.PodExecOptions{
-			Command: cmd,
-			Stdin:   true,
-			Stdout:  true,
-			Stderr:  true,
-		}, scheme.ParameterCodec)
-
-		spdyExec, err := remotecommand.NewSPDYExecutor(impConfig, "POST", req.URL())
-		if err != nil {
-			log.Printf("fail create NewSPDYExecutor for url '%s': %v", req.URL(), err)
+			log.Printf("can't create exec: %v", err)
 			s.Stderr().Write([]byte(ErrDestination.Error()))
-			s.Exit(1)
 
-			return
-		}
-
-		// WebSocketExecutor must be "GET" method as described in RFC 6455 Sec. 4.1 (page 17).
-		websocketExec, err := remotecommand.NewWebSocketExecutor(impConfig, "GET", req.URL().String())
-		if err != nil {
-			return
-		}
-
-		exec, err := remotecommand.NewFallbackExecutor(websocketExec, spdyExec, func(err error) bool {
-			return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
-		})
-		if err != nil {
 			return
 		}
 
