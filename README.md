@@ -41,6 +41,107 @@ To use SFTP, you can use the following command:
 sftp -i /path/to/private/key user@pod.namespace@localhost -P 2222
 ```
 
+## User Management
+
+k8ssh uses the service account name as the username when you SSH into a pod. You can configure the public key for the service account using the `ssh.barpilot.io/publickey` annotation.
+
+To add user with a public key, you can use the following configuration:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-user-ssh
+  annotations:
+    ssh.barpilot.io/publickey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQD..."
+```
+
+## Access Control
+
+k8ssh uses Kubernetes RBAC to control access to the pods. You can grant access to user service account to a specific pod by adding the following RBAC configuration:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-access
+rules:
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+  resourceNames:
+  - my-pod
+```
+
+You can then bind this role to a user or group using the following RBAC configuration:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-access
+subjects:
+- kind: ServiceAccount
+  name: my-user-ssh
+  namespace: default
+```
+
+## Command Management
+
+You can configure the command to execute when the user logs in using the `ssh.barpilot.io/command` annotation.
+
+You can also configure a prefix command to execute before the main command using the `ssh.barpilot.io/prefix-command` annotation.
+
+### Pod Example
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-pod
+  annotations:
+    ssh.barpilot.io/command: "bash"
+    ssh.barpilot.io/prefix-command: "echo Prefix;"
+```
+
+## Impersonation
+
+k8ssh use impersonation to enforce the Kubernetes RBAC rules. When you SSH into a pod, k8ssh will impersonate the service account associated with the pod. This allows you to access the pod with the same permissions as the service account.
+
+To impersonate a service account, you need to have the `impersonate` permission in the Kubernetes RBAC rules. You can grant this permission by adding the following rule to your RBAC configuration:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: impersonate
+rules:
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["impersonate"]
+```
+
+You can then bind this role to a user or group using the following RBAC configuration to your k8ssh service account:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8sssh-impersonate
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: impersonate
+subjects:
+- kind: ServiceAccount
+  name: k8ssh
+  namespace: default
+```
+
 ## Configuration
 
 k8ssh uses annotations on service accounts and pods to configure the SSH and SFTP commands. The following annotations are supported:
