@@ -50,7 +50,7 @@ func New(addr string, config *rest.Config, l *slog.Logger) (*Server, error) {
 		Addr:             addr,
 		Handler:          k8sshServer.SshHandler(),
 		PublicKeyHandler: k8sshServer.PublicKeyHandler(),
-		PasswordHandler:  k8sshServer.PasswordHandler(),
+		// PasswordHandler:  k8sshServer.PasswordHandler(),
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{
 			"sftp": k8sshServer.SftpHandler(),
 		},
