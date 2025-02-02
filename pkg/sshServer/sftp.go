@@ -5,21 +5,20 @@ import (
 
 	"github.com/gliderlabs/ssh"
 	v1 "k8s.io/api/core/v1"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func SftpHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.SubsystemHandler {
+func SftpHandler(cl client.Client, config *rest.Config) ssh.SubsystemHandler {
 	return func(s ssh.Session) {
 		ctx := s.Context()
 
 		user, ok := ctx.Value(User{}).(*User)
 		if !ok {
-			u, err := getUser(ctx, clientset, ctx.User())
+			u, err := getUser(ctx, cl, ctx.User())
 			if err != nil {
 				s.Stderr().Write([]byte(err.Error()))
 
@@ -31,17 +30,19 @@ func SftpHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Subsy
 			user = u
 		}
 
-		pod, err := clientset.CoreV1().Pods(user.Namespace).Get(ctx, user.Pod, metav1.GetOptions{})
-		if kerrors.IsNotFound(err) {
-			log.Printf("Can't find pod %s/%s", user.Namespace, user.Pod)
+		pod := &v1.Pod{}
+		if err := cl.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.Pod}, pod); err != nil {
+			log.Printf("Can't find pod %s/%s: %v", user.Namespace, user.Pod, err)
+			s.Stderr().Write([]byte(ErrDestination.Error()))
 			s.Exit(1)
 
 			return
 		}
 
-		sa, err := clientset.CoreV1().ServiceAccounts(user.Namespace).Get(ctx, user.User, metav1.GetOptions{})
-		if kerrors.IsNotFound(err) {
-			log.Printf("Can't find sa %s/%s", user.Namespace, user.User)
+		sa := &v1.ServiceAccount{}
+		if err := cl.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.User}, sa); err != nil {
+			log.Printf("Can't find service account %s/%s: %v", user.Namespace, user.User, err)
+			s.Stderr().Write([]byte(ErrDestination.Error()))
 			s.Exit(1)
 
 			return
@@ -83,7 +84,7 @@ func SftpHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Subsy
 			Stderr:  true,
 		}, scheme.ParameterCodec)
 
-		exec, err := remotecommand.NewSPDYExecutor(impConfig, "POST", req.URL())
+		spdyExec, err := remotecommand.NewSPDYExecutor(impConfig, "POST", req.URL())
 		if err != nil {
 			log.Printf("fail create NewSPDYExecutor for url '%s': %v", req.URL(), err)
 			s.Stderr().Write([]byte(ErrDestination.Error()))
@@ -92,7 +93,20 @@ func SftpHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Subsy
 			return
 		}
 
-		if err := exec.Stream(remotecommand.StreamOptions{
+		// WebSocketExecutor must be "GET" method as described in RFC 6455 Sec. 4.1 (page 17).
+		websocketExec, err := remotecommand.NewWebSocketExecutor(impConfig, "GET", req.URL().String())
+		if err != nil {
+			return
+		}
+
+		exec, err := remotecommand.NewFallbackExecutor(websocketExec, spdyExec, func(err error) bool {
+			return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
+		})
+		if err != nil {
+			return
+		}
+
+		if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 			Stdin:  s,
 			Stdout: s,
 			Stderr: s.Stderr(),
@@ -103,7 +117,5 @@ func SftpHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Subsy
 
 			return
 		}
-
-		return
 	}
 }

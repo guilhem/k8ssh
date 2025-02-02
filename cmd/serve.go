@@ -16,13 +16,14 @@ limitations under the License.
 package cmd
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"k8s.io/client-go/rest"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	sshserver "github.com/guilhem/k8ssh/pkg/sshServer"
 )
@@ -59,12 +60,13 @@ func serve(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	config, err := rest.InClusterConfig()
+	cliconfig := genericclioptions.NewConfigFlags(false)
+	restConfig, err := cliconfig.ToRESTConfig()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get rest config: %w", err)
 	}
 
-	s, err := sshserver.New(addr, config)
+	s, err := sshserver.New(addr, restConfig)
 	if err != nil {
 		return err
 	}

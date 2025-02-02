@@ -10,12 +10,10 @@ import (
 	"github.com/gliderlabs/ssh"
 	"github.com/google/shlex"
 	v1 "k8s.io/api/core/v1"
-	kerrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type User struct {
@@ -31,13 +29,13 @@ const AuthorizedKeyAnnotation = "ssh.barpilot.io/publickey"
 const CommandAnnotation = "ssh.barpilot.io/command"
 const PrefixCommandAnnotation = "ssh.barpilot.io/prefix-command"
 
-func SshHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Handler {
+func SshHandler(cl client.Client, config *rest.Config) ssh.Handler {
 	return func(s ssh.Session) {
 		ctx := s.Context()
 
 		user, ok := ctx.Value(User{}).(*User)
 		if !ok {
-			u, err := getUser(ctx, clientset, ctx.User())
+			u, err := getUser(ctx, cl, ctx.User())
 			if err != nil {
 				s.Stderr().Write([]byte(err.Error()))
 
@@ -56,17 +54,19 @@ func SshHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Handle
 		// 	return
 		// }
 
-		pod, err := clientset.CoreV1().Pods(user.Namespace).Get(ctx, user.Pod, metav1.GetOptions{})
-		if kerrors.IsNotFound(err) {
-			log.Printf("Can't find pod %s/%s", user.Namespace, user.Pod)
+		pod := &v1.Pod{}
+		if err := cl.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.Pod}, pod); err != nil {
+			log.Printf("Can't find pod %s/%s: %v", user.Namespace, user.Pod, err)
+			s.Stderr().Write([]byte(ErrDestination.Error()))
 			s.Exit(1)
 
 			return
 		}
 
-		sa, err := clientset.CoreV1().ServiceAccounts(user.Namespace).Get(ctx, user.User, metav1.GetOptions{})
-		if kerrors.IsNotFound(err) {
-			log.Printf("Can't find sa %s/%s", user.Namespace, user.User)
+		sa := &v1.ServiceAccount{}
+		if err := cl.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.User}, sa); err != nil {
+			log.Printf("Can't find service account %s/%s: %v", user.Namespace, user.User, err)
+			s.Stderr().Write([]byte(ErrDestination.Error()))
 			s.Exit(1)
 
 			return
@@ -157,8 +157,6 @@ func SshHandler(clientset *kubernetes.Clientset, config *rest.Config) ssh.Handle
 
 			return
 		}
-
-		return
 	}
 }
 
@@ -180,7 +178,7 @@ func (s sizeQueue) Next() *remotecommand.TerminalSize {
 	return tSize
 }
 
-func getUser(ctx context.Context, client *kubernetes.Clientset, sshUser string) (*User, error) {
+func getUser(ctx context.Context, cl client.Client, sshUser string) (*User, error) {
 	var u User
 
 	user, domain, ok := strings.Cut(sshUser, "@")
@@ -198,9 +196,9 @@ func getUser(ctx context.Context, client *kubernetes.Clientset, sshUser string) 
 	u.Pod = pod
 	u.Namespace = namespace
 
-	sa, err := client.CoreV1().ServiceAccounts(namespace).Get(ctx, user, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
+	sa := &v1.ServiceAccount{}
+	if err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: user}, sa); err != nil {
+		return nil, fmt.Errorf("can't get service account: %w", err)
 	}
 
 	ann := sa.GetAnnotations()
@@ -227,7 +225,7 @@ func command(inputCmd []string, pod *v1.Pod, sa *v1.ServiceAccount) ([]string, e
 		if ok {
 			annoCmds, err := shlex.Split(podAnnoCmd)
 			if err != nil {
-				return nil, fmt.Errorf("Can't split command annotation '%s': %w", podAnnoCmd, err)
+				return nil, fmt.Errorf("can't split command annotation '%s': %w", podAnnoCmd, err)
 			}
 
 			return annoCmds, nil
@@ -238,7 +236,7 @@ func command(inputCmd []string, pod *v1.Pod, sa *v1.ServiceAccount) ([]string, e
 		if ok {
 			annoCmds, err := shlex.Split(saAnnoCmd)
 			if err != nil {
-				return nil, fmt.Errorf("Can't split command annotation '%s': %w", saAnnoCmd, err)
+				return nil, fmt.Errorf("can't split command annotation '%s': %w", saAnnoCmd, err)
 			}
 
 			return annoCmds, nil
@@ -251,7 +249,7 @@ func command(inputCmd []string, pod *v1.Pod, sa *v1.ServiceAccount) ([]string, e
 	if len(cmd) == 0 {
 		annoCmd, err := cmdf(CommandAnnotation)
 		if err != nil {
-			return nil, fmt.Errorf("Can't get command: %w", err)
+			return nil, fmt.Errorf("can't get command: %w", err)
 		}
 
 		cmd = annoCmd
@@ -259,7 +257,7 @@ func command(inputCmd []string, pod *v1.Pod, sa *v1.ServiceAccount) ([]string, e
 
 	prefixCmd, err := cmdf(PrefixCommandAnnotation)
 	if err != nil {
-		return nil, fmt.Errorf("Can't get prefix: %w", err)
+		return nil, fmt.Errorf("can't get prefix: %w", err)
 	}
 
 	log.Printf("prefixCmd: %+v", prefixCmd)

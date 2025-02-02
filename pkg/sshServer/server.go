@@ -1,11 +1,15 @@
 package sshserver
 
 import (
+	"fmt"
+
 	"github.com/gliderlabs/ssh"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Server struct {
@@ -13,25 +17,30 @@ type Server struct {
 }
 
 func New(addr string, config *rest.Config) (*ssh.Server, error) {
-	if err := setKubernetesDefaults(config); err != nil {
-		return nil, err
+
+	// Create a new runtime client
+	scheme := runtime.NewScheme()
+
+	// Add scheme for pods and service accounts
+	if err := v1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("failed to add scheme: %w", err)
 	}
 
-	// creates the clientset
-	clientset, err := kubernetes.NewForConfig(config)
+	// Create a new runtime client
+	cl, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
 	rl := NewRateLimiter()
 
 	server := ssh.Server{
 		Addr:             addr,
-		Handler:          SshHandler(clientset, config),
-		PublicKeyHandler: PublicKeyHandler(clientset),
+		Handler:          SshHandler(cl, config),
+		PublicKeyHandler: PublicKeyHandler(cl),
 		PasswordHandler:  PasswordHandler(),
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{
-			"sftp": SftpHandler(clientset, config),
+			"sftp": SftpHandler(cl, config),
 		},
 		ConnCallback:             rl.ConnCallback(),
 		ConnectionFailedCallback: rl.ConnectionFailedCallback(),
