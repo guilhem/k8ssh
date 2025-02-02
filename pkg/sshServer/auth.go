@@ -4,15 +4,14 @@ import (
 	"log"
 
 	"github.com/gliderlabs/ssh"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func PublicKeyHandler(cl client.Client) ssh.PublicKeyHandler {
+func (s Server) PublicKeyHandler() ssh.PublicKeyHandler {
 	return func(ctx ssh.Context, key ssh.PublicKey) bool {
 		// Get or set user
 		user, ok := ctx.Value(User{}).(*User)
 		if !ok {
-			u, err := getUser(ctx, cl, ctx.User())
+			u, err := getUser(ctx, s.Client, ctx.User())
 			if err != nil {
 				log.Printf("can't get user: %v", err)
 

@@ -78,7 +78,7 @@ func serve(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := s.Serve(l); err != nil {
+	if err := s.Server.Serve(l); err != nil {
 		return err
 	}
 
