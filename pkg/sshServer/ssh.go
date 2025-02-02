@@ -190,7 +190,8 @@ func getUser(ctx context.Context, cl client.Client, sshUser string) (*User, erro
 
 	pod, namespace, ok := strings.Cut(domain, ".")
 	if !ok {
-		return nil, errors.New("can't parse domain")
+		// If no namespace is provided, use the default namespace
+		namespace = "default"
 	}
 
 	u.Pod = pod
