@@ -147,7 +147,7 @@ func (s Server) RemotecommandExec(config *rest.Config, pod, namespace string, cm
 		Stdout:  true,
 		Stderr:  true,
 		TTY:     pty,
-	}, runtime.NewParameterCodec(scheme.Scheme))
+	}, runtime.NewParameterCodec(s.Scheme))
 
 	spdyExec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
 	if err != nil {
