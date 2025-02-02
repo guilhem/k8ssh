@@ -2,6 +2,7 @@ package sshserver
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/gliderlabs/ssh"
 	v1 "k8s.io/api/core/v1"
@@ -16,9 +17,11 @@ type Server struct {
 	Scheme *runtime.Scheme
 	Client client.Client
 	Config *rest.Config
+
+	Logger *slog.Logger
 }
 
-func New(addr string, config *rest.Config) (*Server, error) {
+func New(addr string, config *rest.Config, l *slog.Logger) (*Server, error) {
 
 	// Create a new runtime client
 	scheme := runtime.NewScheme()
@@ -40,13 +43,14 @@ func New(addr string, config *rest.Config) (*Server, error) {
 		Scheme: scheme,
 		Client: cl,
 		Config: config,
+		Logger: l,
 	}
 
 	k8sshServer.Server = &ssh.Server{
 		Addr:             addr,
 		Handler:          k8sshServer.SshHandler(),
 		PublicKeyHandler: k8sshServer.PublicKeyHandler(),
-		PasswordHandler:  PasswordHandler(),
+		PasswordHandler:  k8sshServer.PasswordHandler(),
 		SubsystemHandlers: map[string]ssh.SubsystemHandler{
 			"sftp": k8sshServer.SftpHandler(),
 		},

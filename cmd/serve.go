@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
@@ -66,19 +67,21 @@ func serve(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get rest config: %w", err)
 	}
 
-	s, err := sshserver.New(addr, restConfig)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	s, err := sshserver.New(addr, restConfig, logger)
 	if err != nil {
 		return err
 	}
 
 	var lc net.ListenConfig
 
-	l, err := lc.Listen(ctx, "tcp", addr)
+	listerner, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		return err
 	}
 
-	if err := s.Server.Serve(l); err != nil {
+	if err := s.Server.Serve(listerner); err != nil {
 		return err
 	}
 

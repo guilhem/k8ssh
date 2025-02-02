@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/gliderlabs/ssh"
@@ -51,9 +50,13 @@ func (s Server) SshHandler() ssh.Handler {
 			user = u
 		}
 
+		l := s.Logger.With("user", user.User, "namespace", user.Namespace, "pod", user.Pod)
+
+		l.Debug("User connected")
+
 		pod := &v1.Pod{}
 		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.Pod}, pod); err != nil {
-			log.Printf("Can't find pod %s/%s: %v", user.Namespace, user.Pod, err)
+			l.Error("Can't find pod", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
@@ -62,7 +65,7 @@ func (s Server) SshHandler() ssh.Handler {
 
 		sa := &v1.ServiceAccount{}
 		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.User}, sa); err != nil {
-			log.Printf("Can't find service account %s/%s: %v", user.Namespace, user.User, err)
+			l.Error("Can't find service account", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
@@ -71,7 +74,7 @@ func (s Server) SshHandler() ssh.Handler {
 
 		cmd, err := command(sshSession.Command(), pod, sa)
 		if err != nil {
-			log.Printf("Can't get command: %v", err)
+			l.Error("Can't get command", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
@@ -89,13 +92,12 @@ func (s Server) SshHandler() ssh.Handler {
 
 		exec, err := s.RemotecommandExec(impConfig, user.Pod, user.Namespace, cmd, hasPTY)
 		if err != nil {
-			log.Printf("can't create exec: %v", err)
+			l.Error("Can't create exec", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 
 			return
 		}
 
-		// if !ok {
 		if err := exec.StreamWithContext(ctx, remotecommand.StreamOptions{
 			Tty:               hasPTY,
 			Stdin:             sshSession,
@@ -103,12 +105,14 @@ func (s Server) SshHandler() ssh.Handler {
 			Stderr:            sshSession.Stderr(),
 			TerminalSizeQueue: queue,
 		}); err != nil {
-			log.Printf("fail to exec Stream: %v", err)
+			l.Error("Fail to exec Stream", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
 			return
 		}
+
+		l.Debug("User disconnected")
 	}
 }
 
@@ -266,8 +270,6 @@ func command(inputCmd []string, pod *v1.Pod, sa *v1.ServiceAccount) ([]string, e
 	if err != nil {
 		return nil, fmt.Errorf("can't get prefix: %w", err)
 	}
-
-	log.Printf("prefixCmd: %+v", prefixCmd)
 
 	return append(prefixCmd, cmd...), nil
 }

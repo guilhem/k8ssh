@@ -1,8 +1,6 @@
 package sshserver
 
 import (
-	"log"
-
 	"github.com/gliderlabs/ssh"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
@@ -28,9 +26,13 @@ func (s Server) SftpHandler() ssh.SubsystemHandler {
 			user = u
 		}
 
+		l := s.Logger.With("user", user.User, "namespace", user.Namespace, "pod", user.Pod)
+
+		l.Debug("User connected")
+
 		pod := &v1.Pod{}
 		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.Pod}, pod); err != nil {
-			log.Printf("Can't find pod %s/%s: %v", user.Namespace, user.Pod, err)
+			l.Error("Can't find pod", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
@@ -39,7 +41,7 @@ func (s Server) SftpHandler() ssh.SubsystemHandler {
 
 		sa := &v1.ServiceAccount{}
 		if err := s.Client.Get(ctx, client.ObjectKey{Namespace: user.Namespace, Name: user.User}, sa); err != nil {
-			log.Printf("Can't find service account %s/%s: %v", user.Namespace, user.User, err)
+			l.Error("Can't find service account", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
@@ -48,7 +50,7 @@ func (s Server) SftpHandler() ssh.SubsystemHandler {
 
 		cmd, err := command([]string{"/usr/lib/sftp-server", "-e"}, pod, sa)
 		if err != nil {
-			log.Printf("Can't get command: %v", err)
+			l.Error("Can't create command", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
@@ -63,7 +65,7 @@ func (s Server) SftpHandler() ssh.SubsystemHandler {
 
 		exec, err := s.RemotecommandExec(impConfig, user.Pod, user.Namespace, cmd, false)
 		if err != nil {
-			log.Printf("can't create exec: %v", err)
+			l.Error("Can't create exec", "error", err, "command", cmd)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 
 			return
@@ -74,11 +76,13 @@ func (s Server) SftpHandler() ssh.SubsystemHandler {
 			Stdout: sshSession,
 			Stderr: sshSession.Stderr(),
 		}); err != nil {
-			log.Printf("fail to exec Stream: %v", err)
+			l.Error("Can't stream", "error", err)
 			sshSession.Stderr().Write([]byte(ErrDestination.Error()))
 			sshSession.Exit(1)
 
 			return
 		}
+
+		l.Debug("User disconnected")
 	}
 }
