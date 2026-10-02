@@ -128,7 +128,7 @@ func (s Server) RemotecommandExec(config *rest.Config, pod, namespace string, cm
 		return nil, fmt.Errorf("can't get HTTP client: %w", err)
 	}
 
-	restClient, err := apiutil.RESTClientForGVK(gvk, false, config, scheme.Codecs, httpClient)
+	restClient, err := apiutil.RESTClientForGVK(gvk, false, false, config, scheme.Codecs, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("can't get REST client: %w", err)
 	}
@@ -212,17 +212,12 @@ func getUser(ctx context.Context, cl client.Client, sshUser string) (*User, erro
 		return nil, fmt.Errorf("can't get service account: %w", err)
 	}
 
-	ann := sa.GetAnnotations()
-
-	authorizedKey, ok := ann[AuthorizedKeyAnnotation]
-	if ok {
-		sshKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(authorizedKey))
-		if err != nil {
-			return nil, err
-		}
-
-		u.PublicKey = sshKey
+	authorizedKey := sa.GetAnnotations()[AuthorizedKeyAnnotation]
+	sshKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(authorizedKey))
+	if err != nil {
+		return nil, fmt.Errorf("invalid service account public key: %w", err)
 	}
+	u.PublicKey = sshKey
 
 	return &u, nil
 }
