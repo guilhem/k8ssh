@@ -11,26 +11,33 @@ k8ssh is a tool that allows you to SSH into Kubernetes pods using service accoun
 
 ## Installation
 
-To install k8ssh, you need to have Go installed on your machine. Then, you can clone the repository and build the binary.
+Build with Go 1.26 or newer:
 
 ```sh
 git clone https://github.com/guilhem/k8ssh.git
 cd k8ssh
-go build -o k8ssh ./cmd
+go build -o k8ssh .
 ```
 
 ## Usage
 
-To start the k8ssh server, use the `serve` command:
+The server uses your current kubeconfig (or its in-cluster service account).
+Create a persistent, unencrypted host key and start the server:
 
 ```sh
-./k8ssh serve --address :2222
+ssh-keygen -t ed25519 -N '' -f ./host_key
+./k8ssh serve --address :2222 --hostkey ./host_key
 ```
 
-This will start the server on port 2222. You can then SSH into your Kubernetes pods using the following command:
+Keep `host_key` private and reuse it across restarts. Without `--hostkey`, k8ssh
+generates an ephemeral RSA key and clients will see a different host identity after
+a restart. OpenSSH, PKCS#1, EC and PKCS#8 private key files are supported; encrypted
+keys are not.
+
+Connect using the login name `<service-account>@<pod>.<namespace>`:
 
 ```sh
-ssh -i /path/to/private/key user@pod.namespace@localhost -p 2222
+ssh -p 2222 -i /path/to/private/key -l 'my-user-ssh@my-pod.default' localhost
 ```
 
 ### SFTP
@@ -38,14 +45,18 @@ ssh -i /path/to/private/key user@pod.namespace@localhost -p 2222
 To use SFTP, you can use the following command:
 
 ```sh
-sftp -i /path/to/private/key user@pod.namespace@localhost -P 2222
+sftp -P 2222 -i /path/to/private/key -o User='my-user-ssh@my-pod.default' localhost
 ```
+
+The target container must provide `/usr/lib/sftp-server` for SFTP.
 
 ## User Management
 
 k8ssh uses the service account name as the username when you SSH into a pod. You can configure the public key for the service account using the `ssh.barpilot.io/publickey` annotation.
 
-To add user with a public key, you can use the following configuration:
+The service account must be in the target pod namespace and have a valid SSH
+public key annotation. Missing or malformed keys deny authentication. To add a
+user, replace the example key with the contents of that user's `.pub` file:
 
 ```yaml
 apiVersion: v1
@@ -53,12 +64,14 @@ kind: ServiceAccount
 metadata:
   name: my-user-ssh
   annotations:
-    ssh.barpilot.io/publickey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQD..."
+    ssh.barpilot.io/publickey: "ssh-ed25519 AAAA... user@example"
 ```
 
 ## Access Control
 
-k8ssh uses Kubernetes RBAC to control access to the pods. You can grant access to user service account to a specific pod by adding the following RBAC configuration:
+The authenticated service account needs access to `pods/exec`. Both `get`
+(WebSocket) and `create` (SPDY fallback) are used. This Role limits access to a
+single pod; create it and the RoleBinding in that pod's namespace:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -68,7 +81,7 @@ metadata:
 rules:
 - apiGroups: [""]
   resources: ["pods/exec"]
-  verbs: ["create"]
+  verbs: ["get", "create"]
   resourceNames:
   - my-pod
 ```
@@ -105,12 +118,16 @@ metadata:
   name: my-pod
   annotations:
     ssh.barpilot.io/command: "bash"
-    ssh.barpilot.io/prefix-command: "echo Prefix;"
+    ssh.barpilot.io/prefix-command: "env TERM=xterm-256color"
 ```
 
 ## Impersonation
 
-k8ssh use impersonation to enforce the Kubernetes RBAC rules. When you SSH into a pod, k8ssh will impersonate the service account associated with the pod. This allows you to access the pod with the same permissions as the service account.
+k8ssh impersonates the **authenticated login service account**, which may differ
+from the pod's own service account. Kubernetes authorizes each exec request using
+that identity. The server's own identity needs `get` access to pods and service
+accounts for lookup, plus permission to impersonate the allowed login accounts.
+Only trusted administrators should be able to change their public key annotations.
 
 To impersonate a service account, you need to have the `impersonate` permission in the Kubernetes RBAC rules. You can grant this permission by adding the following rule to your RBAC configuration:
 
@@ -123,6 +140,10 @@ rules:
 - apiGroups: [""]
   resources: ["serviceaccounts"]
   verbs: ["impersonate"]
+  resourceNames: ["my-user-ssh"]
+- apiGroups: [""]
+  resources: ["pods", "serviceaccounts"]
+  verbs: ["get"]
 ```
 
 You can then bind this role to a user or group using the following RBAC configuration to your k8ssh service account:
@@ -131,7 +152,7 @@ You can then bind this role to a user or group using the following RBAC configur
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: k8sssh-impersonate
+  name: k8ssh-impersonate
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -149,6 +170,21 @@ k8ssh uses annotations on service accounts and pods to configure the SSH and SFT
 - `ssh.barpilot.io/publickey`: The public key for the service account.
 - `ssh.barpilot.io/command`: The command to execute when the user logs in.
 - `ssh.barpilot.io/prefix-command`: A prefix command to execute before the main command.
+
+Commands are split into arguments, not interpreted by a shell. A prefix such as
+`env TERM=xterm-256color` is prepended to both SSH and SFTP commands. Pod
+annotations take precedence over service account annotations.
+
+## Development
+
+```sh
+go test -race ./...
+go vet ./...
+go build -o k8ssh .
+```
+
+CI runs these checks on Go 1.26 and 1.27. Unit tests do not establish connectivity
+or authorization against a live Kubernetes cluster.
 
 ## Contributing
 

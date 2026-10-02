@@ -17,12 +17,8 @@ package cmd
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -31,6 +27,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 
 	sshserver "github.com/guilhem/k8ssh/pkg/sshServer"
@@ -111,31 +108,13 @@ func serve(cmd *cobra.Command, args []string) error {
 }
 
 func ParsePrivateKey(pemBytes []byte) (crypto.Signer, error) {
-	// Decode the PEM block
-	block, _ := pem.Decode(pemBytes)
-	if block == nil {
-		return nil, errors.New("can't decode PEM block")
+	key, err := ssh.ParseRawPrivateKey(pemBytes)
+	if err != nil {
+		return nil, err
 	}
-
-	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
-		return key, nil
+	signer, ok := key.(crypto.Signer)
+	if !ok {
+		return nil, fmt.Errorf("unsupported host key type %T", key)
 	}
-
-	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
-		return key, nil
-	}
-
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err == nil {
-		switch k := key.(type) {
-		case *rsa.PrivateKey:
-			return k, nil
-		case *ecdsa.PrivateKey:
-			return k, nil
-		default:
-			return nil, errors.New("key type not supported")
-		}
-	}
-
-	return nil, errors.New("key type not supported")
+	return signer, nil
 }

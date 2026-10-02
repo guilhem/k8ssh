@@ -1,4 +1,4 @@
-FROM golang:1.23 as build
+FROM golang:1.27 AS build
 
 WORKDIR /go/src/app
 
@@ -10,7 +10,7 @@ COPY . .
 ENV CGO_ENABLED=0
 RUN go build -ldflags="-s -w" -o /go/bin/app
 
-FROM gcr.io/distroless/static-debian11:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 
 COPY --from=build /go/bin/app /
 
